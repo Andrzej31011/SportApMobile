@@ -7,8 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:sport_ap_mobile/core/providers.dart';
 import 'package:sport_ap_mobile/features/map/data/map_repository.dart';
 import 'package:sport_ap_mobile/features/map/models/map_marker_model.dart';
+import 'package:sport_ap_mobile/features/profile/data/profile_repository.dart';
+import 'package:sport_ap_mobile/features/profile/state/profile_controller.dart';
 
 enum _MapMarkerFilter { all, events, facilities }
 
@@ -29,11 +32,20 @@ class _MapScreenState extends ConsumerState<MapScreen> {
   List<MapMarkerModel> _allMarkers = const <MapMarkerModel>[];
   _MapMarkerFilter _filter = _MapMarkerFilter.all;
   bool _isLoading = false;
+  bool _isLocating = false;
   bool _hasLoadedAtLeastOnce = false;
   bool _lastApiResultWasEmpty = false;
+  bool _isMapReady = false;
+  LatLng _resolvedCenter = _defaultCenter;
   String? _errorMessage;
   String? _lastBboxKey;
   int _requestCounter = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_resolveInitialCenter());
+  }
 
   @override
   void dispose() {
@@ -61,9 +73,12 @@ class _MapScreenState extends ConsumerState<MapScreen> {
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _defaultCenter,
+              initialCenter: _resolvedCenter,
               initialZoom: 11,
-              onMapReady: () => _scheduleFetchForCurrentCamera(immediate: true),
+              onMapReady: () {
+                _isMapReady = true;
+                _moveMap(_resolvedCenter, forceFetch: true);
+              },
               onPositionChanged: (camera, _) {
                 _scheduleFetch(camera.visibleBounds);
               },
@@ -113,6 +128,21 @@ class _MapScreenState extends ConsumerState<MapScreen> {
                       .toList(),
                 ),
               ),
+            ),
+          ),
+          Positioned(
+            right: 14,
+            bottom: 22,
+            child: FloatingActionButton.small(
+              heroTag: 'map-my-location',
+              onPressed: _isLocating ? null : _centerOnMyLocation,
+              child: _isLocating
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.my_location),
             ),
           ),
           if (_isLoading)
@@ -210,14 +240,132 @@ class _MapScreenState extends ConsumerState<MapScreen> {
     }
   }
 
+  Future<void> _resolveInitialCenter() async {
+    final locationResult = await ref
+        .read(locationServiceProvider)
+        .getCurrentLocation(requestPermission: false);
+
+    if (locationResult.isSuccess) {
+      final center = LatLng(
+        locationResult.latitude!,
+        locationResult.longitude!,
+      );
+      _resolvedCenter = center;
+      if (mounted && _isMapReady) {
+        _moveMap(center, forceFetch: true);
+      }
+      return;
+    }
+
+    final profileCenter = await _profileCenter();
+    if (profileCenter != null) {
+      _resolvedCenter = profileCenter;
+      if (mounted && _isMapReady) {
+        _moveMap(profileCenter, forceFetch: true);
+      }
+    }
+  }
+
+  Future<LatLng?> _profileCenter() async {
+    final userFromState = ref.read(profileControllerProvider).user;
+    final fromState = _toLatLng(
+      latitude: userFromState?.latitude,
+      longitude: userFromState?.longitude,
+    );
+    if (fromState != null) {
+      return fromState;
+    }
+
+    try {
+      final user = await ref
+          .read(profileRepositoryProvider)
+          .getProfile()
+          .timeout(const Duration(seconds: 6));
+      return _toLatLng(latitude: user.latitude, longitude: user.longitude);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  LatLng? _toLatLng({double? latitude, double? longitude}) {
+    if (latitude == null || longitude == null) {
+      return null;
+    }
+    if (!latitude.isFinite || !longitude.isFinite) {
+      return null;
+    }
+    return LatLng(latitude, longitude);
+  }
+
+  Future<void> _centerOnMyLocation() async {
+    setState(() => _isLocating = true);
+    final result = await ref
+        .read(locationServiceProvider)
+        .getCurrentLocation(requestPermission: true);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() => _isLocating = false);
+
+    if (result.isSuccess) {
+      final center = LatLng(result.latitude!, result.longitude!);
+      _resolvedCenter = center;
+      _moveMap(center, forceFetch: true);
+      return;
+    }
+
+    _showLocationError(
+      message: result.message ?? 'Nie udalo sie pobrac lokalizacji.',
+      openLocationSettings: result.canOpenLocationSettings,
+      openAppSettings: result.canOpenAppSettings,
+    );
+  }
+
   void _refreshCurrentBounds() {
     _scheduleFetchForCurrentCamera(immediate: true, force: true);
+  }
+
+  void _moveMap(LatLng center, {bool forceFetch = false}) {
+    if (!_isMapReady) {
+      return;
+    }
+    final zoom = _mapController.camera.zoom;
+    _mapController.move(center, zoom.isFinite ? zoom : 11);
+    _scheduleFetchForCurrentCamera(immediate: true, force: forceFetch);
+  }
+
+  void _showLocationError({
+    required String message,
+    required bool openLocationSettings,
+    required bool openAppSettings,
+  }) {
+    final action = openLocationSettings || openAppSettings
+        ? SnackBarAction(
+            label: 'Ustawienia',
+            onPressed: () {
+              if (openLocationSettings) {
+                ref.read(locationServiceProvider).openLocationSettings();
+              } else {
+                ref.read(locationServiceProvider).openAppSettings();
+              }
+            },
+          )
+        : null;
+
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message), action: action));
   }
 
   void _scheduleFetchForCurrentCamera({
     bool immediate = false,
     bool force = false,
   }) {
+    if (!_isMapReady) {
+      return;
+    }
+
     _scheduleFetch(
       _mapController.camera.visibleBounds,
       immediate: immediate,

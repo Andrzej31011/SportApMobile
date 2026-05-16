@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:sport_ap_mobile/core/providers.dart';
 import 'package:sport_ap_mobile/core/widgets/app_error_view.dart';
 import 'package:sport_ap_mobile/core/widgets/app_loading_view.dart';
 import 'package:sport_ap_mobile/features/auth/state/auth_controller.dart';
@@ -154,111 +155,226 @@ class ProfileScreen extends ConsumerWidget {
       text: user.locationName ?? '',
     );
 
+    var isLocating = false;
+    var isSaving = false;
+
     await showDialog<void>(
       context: context,
       builder: (context) {
-        return AlertDialog(
-          title: const Text('Edytuj lokalizacje'),
-          content: Form(
-            key: formKey,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  TextFormField(
-                    controller: latController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: const InputDecoration(labelText: 'Latitude'),
-                    validator: (value) {
-                      if (double.tryParse(value ?? '') == null) {
-                        return 'Podaj poprawna szerokosc';
-                      }
-                      return null;
-                    },
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Edytuj lokalizacje'),
+              content: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      TextFormField(
+                        controller: latController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Latitude',
+                        ),
+                        validator: (value) {
+                          if (double.tryParse(value ?? '') == null) {
+                            return 'Podaj poprawna szerokosc';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: lngController,
+                        keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true,
+                          signed: true,
+                        ),
+                        decoration: const InputDecoration(
+                          labelText: 'Longitude',
+                        ),
+                        validator: (value) {
+                          if (double.tryParse(value ?? '') == null) {
+                            return 'Podaj poprawna dlugosc';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: radiusController,
+                        keyboardType: TextInputType.number,
+                        decoration: const InputDecoration(
+                          labelText: 'Promien (km)',
+                        ),
+                        validator: (value) {
+                          if (int.tryParse(value ?? '') == null) {
+                            return 'Podaj poprawny promien';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      TextFormField(
+                        controller: locationController,
+                        decoration: const InputDecoration(
+                          labelText: 'Nazwa lokalizacji',
+                        ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Podaj nazwe lokalizacji';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: isLocating || isSaving
+                            ? null
+                            : () async {
+                                setDialogState(() => isLocating = true);
+
+                                final result = await ref
+                                    .read(locationServiceProvider)
+                                    .getCurrentLocation(
+                                      requestPermission: true,
+                                    );
+
+                                if (!context.mounted) {
+                                  return;
+                                }
+
+                                setDialogState(() => isLocating = false);
+
+                                if (result.isSuccess) {
+                                  latController.text = result.latitude!
+                                      .toStringAsFixed(6);
+                                  lngController.text = result.longitude!
+                                      .toStringAsFixed(6);
+                                  if (locationController.text.trim().isEmpty) {
+                                    locationController.text =
+                                        'Moja lokalizacja';
+                                  }
+
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'Lokalizacja zostala uzupelniona.',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                final action =
+                                    result.canOpenAppSettings ||
+                                        result.canOpenLocationSettings
+                                    ? SnackBarAction(
+                                        label: 'Ustawienia',
+                                        onPressed: () {
+                                          if (result.canOpenLocationSettings) {
+                                            ref
+                                                .read(locationServiceProvider)
+                                                .openLocationSettings();
+                                          } else {
+                                            ref
+                                                .read(locationServiceProvider)
+                                                .openAppSettings();
+                                          }
+                                        },
+                                      )
+                                    : null;
+
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(
+                                      result.message ??
+                                          'Nie udalo sie pobrac lokalizacji.',
+                                    ),
+                                    action: action,
+                                  ),
+                                );
+                              },
+                        icon: isLocating
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.my_location),
+                        label: Text(
+                          isLocating ? 'Pobieranie...' : 'Zlokalizuj mnie',
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    controller: lngController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: const InputDecoration(labelText: 'Longitude'),
-                    validator: (value) {
-                      if (double.tryParse(value ?? '') == null) {
-                        return 'Podaj poprawna dlugosc';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    controller: radiusController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: 'Promien (km)',
-                    ),
-                    validator: (value) {
-                      if (int.tryParse(value ?? '') == null) {
-                        return 'Podaj poprawny promien';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  TextFormField(
-                    controller: locationController,
-                    decoration: const InputDecoration(
-                      labelText: 'Nazwa lokalizacji',
-                    ),
-                    validator: (value) {
-                      if (value == null || value.trim().isEmpty) {
-                        return 'Podaj nazwe lokalizacji';
-                      }
-                      return null;
-                    },
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Anuluj'),
-            ),
-            FilledButton(
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) {
-                  return;
-                }
+              actions: <Widget>[
+                TextButton(
+                  onPressed: isSaving || isLocating
+                      ? null
+                      : () => Navigator.of(context).pop(),
+                  child: const Text('Anuluj'),
+                ),
+                FilledButton(
+                  onPressed: isSaving || isLocating
+                      ? null
+                      : () async {
+                          if (!formKey.currentState!.validate()) {
+                            return;
+                          }
 
-                final success = await ref
-                    .read(profileControllerProvider.notifier)
-                    .updateLocation(
-                      latitude: double.parse(latController.text),
-                      longitude: double.parse(lngController.text),
-                      radiusKm: int.parse(radiusController.text),
-                      locationName: locationController.text.trim(),
-                    );
+                          setDialogState(() => isSaving = true);
+                          final success = await ref
+                              .read(profileControllerProvider.notifier)
+                              .updateLocation(
+                                latitude: double.parse(latController.text),
+                                longitude: double.parse(lngController.text),
+                                radiusKm: int.parse(radiusController.text),
+                                locationName: locationController.text.trim(),
+                              );
+                          if (!context.mounted) {
+                            return;
+                          }
+                          setDialogState(() => isSaving = false);
 
-                if (!context.mounted) {
-                  return;
-                }
+                          if (success) {
+                            Navigator.of(context).pop();
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Lokalizacja zapisana.'),
+                              ),
+                            );
+                            return;
+                          }
 
-                if (success) {
-                  Navigator.of(context).pop();
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Lokalizacja zapisana.')),
-                  );
-                }
-              },
-              child: const Text('Zapisz'),
-            ),
-          ],
+                          final message = ref
+                              .read(profileControllerProvider)
+                              .errorMessage;
+                          if (message != null) {
+                            ScaffoldMessenger.of(
+                              context,
+                            ).showSnackBar(SnackBar(content: Text(message)));
+                          }
+                        },
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Zapisz'),
+                ),
+              ],
+            );
+          },
         );
       },
     );

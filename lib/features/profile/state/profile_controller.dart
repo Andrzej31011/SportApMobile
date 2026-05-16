@@ -54,13 +54,19 @@ class ProfileController extends StateNotifier<ProfileState> {
     state = state.copyWith(isSaving: true, clearError: true);
 
     try {
-      final user = await _repository.updateLocation(
+      final updatedUser = await _repository.updateLocation(
         latitude: latitude,
         longitude: longitude,
         radiusKm: radiusKm,
         locationName: locationName,
       );
-      state = state.copyWith(isSaving: false, user: user);
+
+      try {
+        final refreshedUser = await _repository.getProfile();
+        state = state.copyWith(isSaving: false, user: refreshedUser);
+      } catch (_) {
+        state = state.copyWith(isSaving: false, user: updatedUser);
+      }
       return true;
     } on ApiException catch (exception) {
       state = state.copyWith(isSaving: false, errorMessage: exception.message);
